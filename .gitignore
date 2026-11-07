@@ -1,0 +1,6 @@
+/target
+/dist
+
+# never commit flash dumps or backups; only the bundled loader
+*.bin
+!/assets/br25loader.bin
