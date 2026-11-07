@@ -1,6 +1,6 @@
 [package]
 name = "jl-explorer"
-version = "0.1.0"
+version = "0.0.1"
 edition = "2021"
 description = "Explore, edit and reflash the firmware of JieLi BR25 (AC696N) based speakers"
 license = "MIT"
