@@ -1,5 +1,7 @@
 # JL Explorer
 
+[![CI](https://github.com/krishnq/jl-explorer/actions/workflows/ci.yml/badge.svg)](https://github.com/krishnq/jl-explorer/actions/workflows/ci.yml)
+
 Desktop tool for speakers built on the JieLi **BR25** chip family (AC696N / AC636N / AC608N).
 It connects over USB, reads the whole flash, lets you browse and
 replace firmware files (e.g. the voice prompts in `tone/`), and writes back only what changed.
@@ -95,6 +97,20 @@ JL_TEST_TONES=dir/with/replacement/tones JL_TEST_EXPECTED=known_good.bin
 On Windows 11 with Smart App Control turned on, freshly built unsigned binaries (build
 scripts, proc-macros, test executables) may be blocked with `os error 4551` or
 `can't find crate`. Building outside `Documents` also helps with Controlled Folder Access.
+
+## Releases
+
+Pre-built Windows and Linux binaries are on the
+[Releases](https://github.com/krishnq/jl-explorer/releases) page. They are built by GitHub
+Actions (`.github/workflows/release.yml`) whenever a version tag is pushed:
+
+```
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+CI (`.github/workflows/ci.yml`) checks formatting, clippy, tests and builds on Windows and
+Linux for every push and pull request.
 
 ## Safety notes
 

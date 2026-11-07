@@ -1,0 +1,89 @@
+name: Release
+
+# Push a version tag (e.g. `git tag v0.1.0 && git push origin v0.1.0`) to build the
+# binaries on GitHub's runners and publish them as a GitHub Release.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: windows-x64
+            os: windows-latest
+            exe: .exe
+          - name: linux-x64
+            os: ubuntu-latest
+            exe: ""
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux GUI libraries
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build
+        run: cargo build --release --locked
+
+      - name: Package
+        shell: bash
+        run: |
+          dir="jl-explorer-${GITHUB_REF_NAME}-${{ matrix.name }}"
+          mkdir -p "$dir"
+          cp "target/release/jl-explorer${{ matrix.exe }}" "target/release/jlcfg${{ matrix.exe }}" "$dir/"
+          cp -r README.md LICENSE THIRD_PARTY_NOTICES.md LICENSES "$dir/"
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            7z a "$dir.zip" "$dir" > /dev/null
+            echo "ASSET=$dir.zip" >> "$GITHUB_ENV"
+          else
+            tar czf "$dir.tar.gz" "$dir"
+            echo "ASSET=$dir.tar.gz" >> "$GITHUB_ENV"
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: ${{ env.ASSET }}
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Checksums
+        run: cd dist && sha256sum * > SHA256SUMS.txt
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
+          body: |
+            Builds made on GitHub Actions from this tag.
+
+            - **Windows:** unzip and run `jl-explorer.exe` as Administrator (needed for USB access).
+              The binaries are unsigned, so SmartScreen / Smart App Control may warn on first run.
+            - **Linux:** run as root, or give your user access to the speaker's `/dev/sg*` node.
+              The Linux build has not been tested on real hardware yet.
+
+            Always keep the backup the app makes before writing to your speaker.
