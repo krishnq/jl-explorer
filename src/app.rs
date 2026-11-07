@@ -51,6 +51,15 @@ struct ItemView<'a> {
     note: Option<&'static str>,
 }
 
+/// What to do right after start-up (from the command line).
+#[derive(Default)]
+pub struct Startup {
+    /// Flash image to open.
+    pub open: Option<PathBuf>,
+    /// File to select in the tree, by name (e.g. "eq_cfg_hw.bin").
+    pub select: Option<String>,
+}
+
 pub struct App {
     worker: Worker,
     image: Option<Image>,
@@ -74,7 +83,7 @@ const BAD: Color32 = Color32::from_rgb(0xEF, 0x5B, 0x5B);
 const GOOD: Color32 = Color32::from_rgb(0x5C, 0xC9, 0x7B);
 
 impl App {
-    pub fn new(cc: &eframe::CreationContext) -> App {
+    pub fn new(cc: &eframe::CreationContext, startup: Startup) -> App {
         let ctx = cc.egui_ctx.clone();
         let mut style = (*ctx.style()).clone();
         style.spacing.item_spacing = egui::vec2(8.0, 6.0);
@@ -82,7 +91,7 @@ impl App {
         ctx.set_style(style);
         ctx.set_visuals(egui::Visuals::dark());
         let repaint = cc.egui_ctx.clone();
-        App {
+        let mut app = App {
             worker: Worker::spawn(move || repaint.request_repaint()),
             image: None,
             source: String::new(),
@@ -97,6 +106,49 @@ impl App {
             need_admin: false,
             error: None,
             last_backup: None,
+        };
+        if let Some(p) = startup.open {
+            app.open_path(&p);
+        }
+        if let Some(name) = startup.select {
+            app.select_by_name(&name);
+        }
+        app
+    }
+
+    /// Open a flash image file. Only the file name is shown in the UI.
+    fn open_path(&mut self, p: &std::path::Path) {
+        let name = file_name(p);
+        match std::fs::read(p)
+            .map_err(anyhow::Error::from)
+            .and_then(|raw| Image::parse(raw, self.dev.as_ref().map(|d| d.chip_key)))
+        {
+            Ok(img) => {
+                self.log(format!("Opened {name}"));
+                self.source = name;
+                self.image = Some(img);
+                self.sel = Sel::Overview;
+            }
+            Err(e) => self.error = Some(format!("Could not open {name}: {e:#}")),
+        }
+    }
+
+    /// Select the first file in the tree with this name.
+    fn select_by_name(&mut self, name: &str) {
+        let Some(img) = &self.image else { return };
+        let found = img
+            .res
+            .iter()
+            .enumerate()
+            .find_map(|(i, r)| match &r.kind {
+                ResKind::Dir { children } => children.iter().position(|c| c.hdr.name() == name).map(|j| Sel::Child(i, j)),
+                _ => (r.name() == name).then_some(Sel::Res(i)),
+            })
+            .or_else(|| img.app_subs.iter().position(|s| s.hdr.name() == name).map(Sel::Sub))
+            .or_else(|| img.top.iter().position(|t| t.hdr.name() == name).map(Sel::Top));
+        match found {
+            Some(sel) => self.sel = sel,
+            None => self.log(format!("No file named {name}")),
         }
     }
 
@@ -142,7 +194,7 @@ impl App {
                     self.busy = false;
                     match save_backup(&data) {
                         Ok(p) => {
-                            self.log(format!("Backup of the flash saved to {}", p.display()));
+                            self.log(format!("Backup of the flash saved to {}", short_path(&p)));
                             self.last_backup = Some(p);
                         }
                         Err(e) => self.log(format!("Could not save a backup: {e}")),
@@ -170,7 +222,7 @@ impl App {
     fn backup_hint(&self) -> String {
         self.last_backup
             .as_ref()
-            .map(|p| p.display().to_string())
+            .map(|p| short_path(p))
             .unwrap_or_else(|| "(none saved)".into())
     }
 
@@ -318,18 +370,7 @@ impl App {
                     .add_filter("All files", &["*"])
                     .pick_file()
                 {
-                    match std::fs::read(&p)
-                        .map_err(anyhow::Error::from)
-                        .and_then(|raw| Image::parse(raw, self.dev.as_ref().map(|d| d.chip_key)))
-                    {
-                        Ok(img) => {
-                            self.log(format!("Opened {} (chip key 0x{:04X})", p.display(), img.chipkey));
-                            self.source = p.display().to_string();
-                            self.image = Some(img);
-                            self.sel = Sel::Overview;
-                        }
-                        Err(e) => self.error = Some(format!("Could not open {}: {e:#}", p.display())),
-                    }
+                    self.open_path(&p);
                 }
             }
             Action::SaveImage => {
@@ -342,7 +383,7 @@ impl App {
                             .save_file()
                         {
                             match std::fs::write(&p, &b.image) {
-                                Ok(()) => self.log(format!("Saved image to {}", p.display())),
+                                Ok(()) => self.log(format!("Saved image to {}", file_name(&p))),
                                 Err(e) => self.error = Some(format!("Save failed: {e}")),
                             }
                         }
@@ -406,7 +447,7 @@ impl App {
                 if let Some(p) = dlg.add_filter("All files", &["*"]).pick_file() {
                     match std::fs::read(&p) {
                         Ok(d) => {
-                            self.log(format!("Replaced {name} with {} ({} bytes)", p.display(), d.len()));
+                            self.log(format!("Replaced {name} with {} ({} bytes)", file_name(&p), d.len()));
                             self.set_data(sel, Some(d));
                         }
                         Err(e) => self.error = Some(format!("{e}")),
@@ -431,7 +472,7 @@ impl App {
                     let data = v.data.to_vec();
                     if let Some(p) = rfd::FileDialog::new().set_file_name(&fname).save_file() {
                         match std::fs::write(&p, data) {
-                            Ok(()) => self.log(format!("Exported {fname} to {}", p.display())),
+                            Ok(()) => self.log(format!("Exported {fname} to {}", file_name(&p))),
                             Err(e) => self.error = Some(format!("{e}")),
                         }
                     }
@@ -453,7 +494,7 @@ impl App {
                         {
                             let text = serde_json::to_string_pretty(&j).unwrap_or_default() + "\n";
                             match std::fs::write(&p, text) {
-                                Ok(()) => self.log(format!("Decompiled {} to {}", v.name, p.display())),
+                                Ok(()) => self.log(format!("Decompiled {} to {}", v.name, file_name(&p))),
                                 Err(e) => self.error = Some(format!("{e}")),
                             }
                         }
@@ -469,10 +510,10 @@ impl App {
                         .and_then(|j| formats::compile(&j));
                     match r {
                         Ok(bin) => {
-                            self.log(format!("Compiled {} ({} bytes)", p.display(), bin.len()));
+                            self.log(format!("Compiled {} ({} bytes)", file_name(&p), bin.len()));
                             self.set_data(sel, Some(bin));
                         }
-                        Err(e) => self.error = Some(format!("Could not compile {}: {e:#}", p.display())),
+                        Err(e) => self.error = Some(format!("Could not compile {}: {e:#}", file_name(&p))),
                     }
                 }
             }
@@ -485,7 +526,7 @@ impl App {
                         .map_err(anyhow::Error::from)
                         .and_then(|_| open::that(&path).map_err(anyhow::Error::from));
                     if let Err(e) = r {
-                        self.error = Some(format!("Could not open {}: {e}", path.display()));
+                        self.error = Some(format!("Could not open {}: {e}", file_name(&path)));
                     }
                 }
             }
@@ -505,7 +546,7 @@ impl App {
                 act.push(Action::Connect);
             }
             if ui
-                .add_enabled(idle && self.dev.is_some(), egui::Button::new("⟳ Re-read flash"))
+                .add_enabled(idle && self.dev.is_some(), egui::Button::new("📥 Re-read flash"))
                 .clicked()
             {
                 act.push(Action::Reread);
@@ -535,7 +576,7 @@ impl App {
                 act.push(Action::PlanWrite);
             }
             if ui
-                .add_enabled(idle && self.dev.is_some(), egui::Button::new("⏻ Reboot speaker"))
+                .add_enabled(idle && self.dev.is_some(), egui::Button::new("⟳ Reboot speaker"))
                 .on_hover_text("Leave download mode and start the speaker's firmware")
                 .clicked()
             {
@@ -611,7 +652,7 @@ impl App {
                         });
                     }
                     ResKind::File { .. } => item(ui, Sel::Res(i), format!("📄 {}", r.name()), r.is_modified()),
-                    ResKind::Raw { .. } => item(ui, Sel::Res(i), format!("❔ {}", r.name()), false),
+                    ResKind::Raw { .. } => item(ui, Sel::Res(i), format!("📄 {}", r.name()), false),
                 }
             }
         });
@@ -656,7 +697,7 @@ impl App {
                     ),
                 );
                 if let Some(p) = &self.last_backup {
-                    row("Last backup", p.display().to_string());
+                    row("Last backup", short_path(p));
                 }
             });
         ui.add_space(8.0);
@@ -707,7 +748,7 @@ impl App {
             }
         }
         if any {
-            if ui.button("↺ Revert all").clicked() {
+            if ui.button("Revert all").clicked() {
                 act.push(Action::RevertAll);
             }
         } else {
@@ -768,7 +809,7 @@ impl App {
             if v.editable && ui.button("📥 Replace…").clicked() {
                 act.push(Action::Replace(self.sel));
             }
-            if v.modified && ui.button("↺ Revert").clicked() {
+            if v.modified && ui.button("Revert").clicked() {
                 act.push(Action::Revert(self.sel));
             }
             if ui.button("📤 Export…").clicked() {
@@ -782,7 +823,7 @@ impl App {
         if let Some(fmt) = fmt {
             ui.horizontal(|ui| {
                 if ui
-                    .button("🧾 Export JSON…")
+                    .button("📤 Export JSON…")
                     .on_hover_text("Decompile to an editable JSON file")
                     .clicked()
                 {
@@ -791,7 +832,7 @@ impl App {
                 if v.editable
                     && fmt != Format::IsdConfig
                     && ui
-                        .button("🧩 Import JSON…")
+                        .button("📥 Import JSON…")
                         .on_hover_text("Compile an edited JSON file back into this file")
                         .clicked()
                 {
@@ -1076,9 +1117,10 @@ fn eq_editor(ui: &mut egui::Ui, data: &[u8], orig: Option<&[u8]>) -> Option<Vec<
                                 }
                             }
                         });
-                        ui.label(RichText::new("Built on the original tuning. Global gain keeps the overall peak no higher than stock. Fine-tune the bands below after picking one.").weak().small());
+                        ui.label(RichText::new("Built on the original tuning. Global gain keeps the overall peak no higher than stock. Fine-tune the bands below after picking one.").weak());
                         ui.add_space(4.0);
                     }
+                    eq_curve(ui, &t);
                     let eqcfg::EqTable { global_gain, enable_mask, bands } = &mut t;
                     ui.horizontal(|ui| {
                         ui.label("Global gain (dB)");
@@ -1107,7 +1149,6 @@ fn eq_editor(ui: &mut egui::Ui, data: &[u8], orig: Option<&[u8]>) -> Option<Vec<
                             ui.end_row();
                         }
                     });
-                    eq_curve(ui, &t);
                     if tch {
                         c.data = t.encode();
                         changed = true;
@@ -1182,11 +1223,7 @@ fn eq_curve(ui: &mut egui::Ui, t: &eqcfg::EqTable) {
             vis.strong_text_color(),
         );
     }
-    ui.label(
-        RichText::new("approximate response (standard filter maths; the chip's own design may differ slightly)")
-            .weak()
-            .small(),
-    );
+    ui.label(RichText::new("Approximate response (standard filter maths; the chip's own design may differ slightly).").weak());
 }
 
 fn isd_view(ui: &mut egui::Ui, data: &[u8]) {
@@ -1254,6 +1291,21 @@ fn ranges(sectors: &[usize]) -> String {
         i += 1;
     }
     out.join(", ")
+}
+
+fn file_name(p: &std::path::Path) -> String {
+    p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()
+}
+
+/// A path without the user's home directory, e.g. "Documents/jl-explorer-backups/flash_1.bin".
+fn short_path(p: &std::path::Path) -> String {
+    let parts: Vec<_> = p
+        .components()
+        .rev()
+        .take(3)
+        .map(|c| c.as_os_str().to_string_lossy().into_owned())
+        .collect();
+    parts.into_iter().rev().collect::<Vec<_>>().join("/")
 }
 
 fn save_backup(data: &[u8]) -> std::io::Result<PathBuf> {

@@ -7,6 +7,15 @@ replace firmware files (e.g. the voice prompts in `tone/`), and writes back only
 Tested on one device so far: a Philips SPA3709 USB speaker. Other BR25 speakers should work,
 but their files may differ.
 
+## Screenshots
+
+![EQ editor with presets and response curve](docs/screenshots/eq.png)
+
+<p>
+  <img src="docs/screenshots/settings.png" alt="Speaker settings editor" width="49%">
+  <img src="docs/screenshots/prompts.png" alt="Voice prompts in the tone folder" width="49%">
+</p>
+
 ## Features
 
 - Connect over USB: switches the speaker into the Boot ROM download mode, uploads the flash
@@ -56,6 +65,9 @@ A typical loop: `unpack` → `decompile` → edit the JSON → `compile` into `d
 then write the image with the GUI.
 
 ## Running
+
+`jl-explorer [flash.bin] [--select <file name>]` opens a dump and selects a file on start-up,
+e.g. `jl-explorer dump.bin --select eq_cfg_hw.bin`.
 
 - **Windows:** run as Administrator. Raw USB disk access requires it, and the app offers to
   restart itself elevated.

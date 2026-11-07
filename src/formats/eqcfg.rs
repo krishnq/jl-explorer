@@ -240,7 +240,7 @@ fn translate(s: &str) -> String {
         "通话上行音效" => "Call uplink (microphone)",
         _ => return s.to_string(),
     };
-    format!("{en} ({s})")
+    en.to_string() // English only: the GUI font has no CJK glyphs
 }
 
 pub fn to_json(f: &EqFile) -> Value {
